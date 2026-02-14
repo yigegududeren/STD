@@ -62,8 +62,65 @@ Departure from the purpose of convenience, we provide two sets of data for your 
 
 
 ### **2.5.2. LiDAR Point cloud data**
-- For the ***Kitti dataset*** (i.e., our Example-1), we read the raw scan data with suffix *".bin"*. These raw LiDAR scan data can be downloaded from the [Kitti Odometry benchmark website](https://www.cvlibs.net/datasets/kitti/eval_odometry.php).
-- For the ***solid-state LiDAR dataset*** (i.e., our Example-2), we read the undistort scan data from the recorded *rosbag* files, whose bag file contains undistort LiDAR scan data in *rostopic: "/cloud_undistort"* 
+
+#### **Input Point Cloud Data Requirements**
+
+The STD descriptor requires **registered point cloud data** as input, meaning each point cloud frame should be transformed to a global coordinate system using the provided poses. The type of input data depends on the LiDAR sensor:
+
+**1) For Mechanical Spinning LiDAR (e.g., KITTI Dataset - Velodyne HDL-64E):**
+- **Data format**: Raw scan data with suffix *".bin"*
+- **Data source**: Direct sensor output without motion distortion correction
+- **Characteristics**: 
+  - Each scan is captured as the sensor rotates (typically at 10 Hz)
+  - Points are in the sensor's local coordinate frame
+  - No undistortion is applied since the vehicle motion during a single scan is minimal
+- **Download**: [Kitti Odometry benchmark website](https://www.cvlibs.net/datasets/kitti/eval_odometry.php)
+- **Processing**: The code transforms raw scans to the global frame using the provided poses, then applies downsampling (voxel filtering)
+
+**2) For Solid-State LiDAR (e.g., Livox Avia):**
+- **Data format**: ROS bag files containing point cloud messages
+- **Data source**: **Undistorted** scan data in rostopic: `"/cloud_undistort"`
+- **Characteristics**:
+  - Small field-of-view (FOV) sensors require motion compensation
+  - Points have already been corrected for motion distortion
+  - Undistortion compensates for vehicle movement during the scanning process
+- **Processing**: The code reads undistorted scans from the bag file, transforms them to the global frame using synchronized poses
+
+**3) General Requirements:**
+- Point clouds should be in **PointXYZI format** (x, y, z coordinates + intensity)
+- Each point cloud must have a corresponding **timestamp** for pose synchronization
+- Point clouds are transformed to a **global/world coordinate system** using the registration poses
+- After global transformation, **voxel downsampling** is applied (configurable via `ds_size` parameter)
+
+**Summary**: 
+- **Raw sensor data** can be used for sensors with slow rotation rates (mechanical LiDARs like KITTI)
+- **Undistorted data** is required for solid-state LiDARs or sensors with significant motion during a scan
+- The key requirement is that point clouds must be **transformable to a common reference frame** using the provided poses
+
+#### **输入点云数据说明 (Chinese Explanation)**
+
+**问：STD描述符的输入点云数据是传感器原始数据还是经过处理的数据？**
+
+**答：取决于激光雷达类型：**
+
+**1) 机械旋转式激光雷达（如KITTI数据集 - Velodyne HDL-64E）：**
+- 使用**原始传感器数据**（.bin格式）
+- 无需运动畸变校正，因为扫描周期内车辆运动较小
+- 数据直接来自传感器输出
+
+**2) 固态激光雷达（如Livox Avia）：**
+- 需要使用**去畸变后的数据**（从rosbag的`/cloud_undistort`话题读取）
+- 必须进行运动补偿，因为小视场角传感器扫描期间车辆运动显著
+- 数据已经过运动畸变校正处理
+
+**3) 通用要求：**
+- 点云格式：PointXYZI（包含x, y, z坐标和强度信息）
+- 每帧点云需要有对应的时间戳用于位姿同步
+- 点云会被转换到全局坐标系（使用提供的位姿）
+- 转换后会进行体素降采样处理
+
+**总结**：原始传感器数据可用于慢速旋转的机械雷达，去畸变数据则是固态雷达的必需输入。关键要求是点云能够通过提供的位姿转换到统一的参考坐标系。
+
 ### **2.5.3. Point cloud registration pose**
 In the [poses file](https://connecthkuhk-my.sharepoint.com/:f:/g/personal/ycj1_connect_hku_hk/EgnGX4jC2zxDi-45YCfbioEBpPCfBVxa2LcrE-90oL4u_A?e=Lb4Yvv), the poses for LiDAR point cloud registration are given in the following data format:
 ```
