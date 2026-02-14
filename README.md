@@ -202,6 +202,43 @@ rosbag play building_slower_motion_avia.bag
 ```
 
 
+# **4. Integration with Other SLAM Systems**
+
+STD can be integrated into existing SLAM systems to provide robust loop closure detection. We provide detailed integration guides for popular SLAM frameworks:
+
+## **4.1. LIO-SAM Integration**
+For detailed instructions on integrating STD with LIO-SAM, see the [LIO-SAM Integration Guide](docs/LIO-SAM_Integration_Guide.md).
+
+**Key Points:**
+- Use LIO-SAM's `/cloud_registered` topic (point clouds in world frame)
+- Accumulate multiple frames to form keyframes for STD
+- Add loop closure factors to LIO-SAM's GTSAM factor graph
+- Use robust noise models for loop closure constraints
+
+**Quick Start:**
+```cpp
+// Initialize STD Manager
+STDescManager* std_manager = new STDescManager(config_setting);
+
+// On each LIO-SAM keyframe, accumulate clouds and process
+if (isKeyFrame) {
+    accumulate_cloud_for_std();
+    if (enough_frames_accumulated) {
+        std_manager->GenerateSTDescs(accumulated_cloud, stds_vec);
+        std_manager->SearchLoop(stds_vec, search_result, loop_transform, loop_std_pair);
+        if (search_result.first >= 0) {
+            // Add loop closure factor to LIO-SAM's gtSAMgraph
+            addSTDLoopFactor(current_id, matched_id, loop_transform);
+        }
+        std_manager->AddSTDescs(stds_vec);
+    }
+}
+```
+
+See `demo/online_demo.cpp` for a complete working example with FAST-LIO2, which follows a similar integration pattern.
+
+---
+
 # **Acknowledgments**
 In the development of **STD_detector**, we stand on the shoulders of the following repositories:
 
