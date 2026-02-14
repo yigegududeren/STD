@@ -40,7 +40,7 @@ When integrating STD into LIO-SAM, you should pass **keyframe point clouds in th
 
 STD works best with **accumulated point clouds** from multiple consecutive frames. Based on the `online_demo.cpp` implementation:
 
-\`\`\`cpp
+```cpp
 // Accumulate point clouds for keyframes
 PointCloud::Ptr key_cloud(new PointCloud);
 
@@ -52,7 +52,7 @@ if (cloudInd % config_setting.sub_frame_num_ == 0 && cloudInd != 0) {
     std_manager->GenerateSTDescs(key_cloud, stds_vec);
     key_cloud->clear(); // Reset for next keyframe
 }
-\`\`\`
+```
 
 **Recommendation for LIO-SAM:**
 - Accumulate 10-20 frames (depending on your `sub_frame_num` parameter)
@@ -79,7 +79,7 @@ STD uses a simpler **frame-count-based** strategy:
 #### Recommended Integration Strategy
 
 **Option 1: Use LIO-SAM's Keyframe Selection (Recommended)**
-\`\`\`cpp
+```cpp
 // In LIO-SAM's saveKeyFramesAndFactor() function
 if (isKeyFrame) {
     // Accumulate recent scans for STD
@@ -94,7 +94,7 @@ if (isKeyFrame) {
     // Add to database
     std_manager->AddSTDescs(stds_vec);
 }
-\`\`\`
+```
 
 **Option 2: Hybrid Approach**
 - Use LIO-SAM's keyframe for odometry factors
@@ -108,13 +108,13 @@ if (isKeyFrame) {
 #### Understanding the Factor Graph Structure
 
 **LIO-SAM's Factor Graph:**
-\`\`\`
+```
 Nodes: Pose estimates at keyframes
 Edges:
   - Odometry factors (between consecutive keyframes)
   - GPS factors (if available)
   - Loop closure factors (from Scan Context or other methods)
-\`\`\`
+```
 
 **Adding STD Loop Closure Factors:**
 
@@ -127,7 +127,7 @@ STD provides:
 
 When STD detects a loop between keyframe `current_id` and `matched_id`:
 
-\`\`\`cpp
+```cpp
 // 1. Detect loop
 std::pair<int, double> search_result(-1, 0);
 std::pair<Eigen::Vector3d, Eigen::Matrix3d> loop_transform;
@@ -145,12 +145,12 @@ if (search_result.first > 0) {
     // 3. Add loop closure factor to GTSAM graph
     addLoopClosureFactor(current_id, matched_frame_id, loop_transform);
 }
-\`\`\`
+```
 
 #### Noise Model Configuration
 
 **For Loop Closure Factors:**
-\`\`\`cpp
+```cpp
 // Use robust noise model (Cauchy kernel) to handle outliers
 double loopNoiseScore = 0.1;  // Adjust based on confidence
 gtsam::Vector robustNoiseVector6(6);
@@ -161,7 +161,7 @@ gtsam::noiseModel::Base::shared_ptr robustLoopNoise =
     gtsam::noiseModel::Robust::Create(
         gtsam::noiseModel::mEstimator::Cauchy::Create(1),
         gtsam::noiseModel::Diagonal::Variances(robustNoiseVector6));
-\`\`\`
+```
 
 **Why Robust Noise Model?**
 - Handles false loop detections gracefully
@@ -174,7 +174,7 @@ gtsam::noiseModel::Base::shared_ptr robustLoopNoise =
 
 #### Step 1: Add STD Manager to LIO-SAM
 
-\`\`\`cpp
+```cpp
 // In mapOptimization.h
 #include "path/to/STDesc.h"
 
@@ -197,7 +197,7 @@ private:
     void addSTDLoopFactor(int current_id, int matched_id, 
                          const std::pair<Eigen::Vector3d, Eigen::Matrix3d>& transform);
 };
-\`\`\`
+```
 
 See full implementation guide in the document...
 
@@ -235,7 +235,7 @@ See full implementation guide in the document...
 **输入要求：**
 - **坐标系**：世界/全局坐标系（不是机体/传感器坐标系）
 - **点云类型**：多帧扫描累积的点云（关键帧）
-- **数据格式**：pcl::PointCloud<pcl::PointXYZI>
+- **数据格式**：`pcl::PointCloud<pcl::PointXYZI>`
 - **预处理**：运动畸变已校正（LIO-SAM 已提供）
 
 **LIO-SAM 提供的数据：**
@@ -247,7 +247,7 @@ See full implementation guide in the document...
 
 STD 在**累积点云**上效果最好，需要累积多个连续帧。参考 online_demo.cpp 的实现：
 
-\`\`\`cpp
+```cpp
 // 为关键帧累积点云
 PointCloud::Ptr key_cloud(new PointCloud);
 
@@ -259,7 +259,7 @@ if (cloudInd % config_setting.sub_frame_num_ == 0 && cloudInd != 0) {
     std_manager->GenerateSTDescs(key_cloud, stds_vec);
     key_cloud->clear(); // 为下一个关键帧重置
 }
-\`\`\`
+```
 
 **LIO-SAM 集成建议：**
 - 累积 10-20 帧（取决于 sub_frame_num 参数）
@@ -285,7 +285,7 @@ if (cloudInd % config_setting.sub_frame_num_ == 0 && cloudInd != 0) {
 
 当 STD 检测到回环时，需要将回环约束作为因子添加到 LIO-SAM 的 GTSAM 因子图中：
 
-\`\`\`cpp
+```cpp
 // 使用鲁棒噪声模型添加回环因子
 double loopNoiseScore = 0.5;
 gtsam::Vector robustNoiseVector6(6);
@@ -303,7 +303,7 @@ gtSAMgraph.add(gtsam::BetweenFactor<gtsam::Pose3>(
 
 // 触发优化
 aLoopIsClosed = true;
-\`\`\`
+```
 
 **关键要点：**
 1. 使用鲁棒噪声模型（Cauchy 核）处理异常回环
