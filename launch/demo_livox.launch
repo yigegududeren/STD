@@ -1,5 +1,8 @@
 <launch>
 <!-- Launch file for Livox AVIA LiDAR -->
+<!-- NOTE: This demo requires UNDISTORTED point cloud data in the rosbag. -->
+<!-- The bag should contain point clouds in topic "/cloud_undistort" that have been -->
+<!-- corrected for motion distortion during the scanning process. -->
 
   <arg name="rviz" default="true" />
   <rosparam command="load" file="$(find std_detector)/config/config_livox.yaml" />
@@ -9,7 +12,9 @@
 		name="place_recognition_livox" 
 		output="screen" 
 	/>
+  <!-- Path to rosbag file containing UNDISTORTED point clouds in /cloud_undistort topic -->
   <param name="bag_path" type="string" value = "/usb/park2.bag"/>
+  <!-- Path to pose file with format: timestamp x y z qx qy qz qw -->
   <param name="pose_path" type="string" value = "/usb2/Bags/loop/avia/poses/park2_pose.txt"/>
 
   <group if="$(arg rviz)">

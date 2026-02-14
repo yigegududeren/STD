@@ -1,5 +1,7 @@
 <launch>
-<!-- Launch file for Livox AVIA LiDAR -->
+<!-- Launch file for Pose Graph Optimization (PGO) demo on KITTI dataset -->
+<!-- NOTE: This demo uses RAW KITTI point cloud data (.bin files). -->
+<!-- The pose file should contain odometry poses that will be optimized using loop closures. -->
 
   <arg name="rviz" default="true" />
   <rosparam command="load" file="$(find std_detector)/config/config_pgo.yaml" />
@@ -13,7 +15,9 @@
 		name="pgo_demo" 
 		output="screen" 
 	/>
+  <!-- Path to folder containing RAW KITTI .bin files -->
   <param name="lidar_path" type="string" value = "/usb/kitti/sequences/00/velodyne/"/>
+  <!-- Path to LiDAR odometry pose file for optimization -->
   <param name="pose_path" type="string" value = "/usb2/kitti_bags/lio_pose/kitti00_pose_lio.txt"/>
 
 
