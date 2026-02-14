@@ -210,8 +210,9 @@ STD can be integrated into existing SLAM systems to provide robust loop closure 
 For detailed instructions on integrating STD with LIO-SAM, see the [LIO-SAM Integration Guide](docs/LIO-SAM_Integration_Guide.md).
 
 **Key Points:**
-- Use LIO-SAM's `/cloud_registered` topic (point clouds in world frame)
-- Accumulate multiple frames to form keyframes for STD
+- STD uses **frame-count-based** keyframes (every N frames), independent of LIO-SAM's keyframes
+- Accumulate point clouds in **world frame** from every frame (not just LIO-SAM keyframes)
+- Process STD **independently** of LIO-SAM's distance/rotation-based keyframe selection
 - Add loop closure factors to LIO-SAM's GTSAM factor graph
 - Use robust noise models for loop closure constraints
 
@@ -219,18 +220,33 @@ For detailed instructions on integrating STD with LIO-SAM, see the [LIO-SAM Inte
 ```cpp
 // Initialize STD Manager
 STDescManager* std_manager = new STDescManager(config_setting);
+int std_frame_count = 0;
+int std_keyframe_interval = 10;  // Every 10 frames
 
-// On each LIO-SAM keyframe, accumulate clouds and process
-if (isKeyFrame) {
-    accumulate_cloud_for_std();
-    if (enough_frames_accumulated) {
-        std_manager->GenerateSTDescs(accumulated_cloud, stds_vec);
+// Process EVERY frame (not just LIO-SAM keyframes)
+void processEveryFrame() {
+    // Get world frame cloud
+    pcl::transformPointCloud(*currentCloud, *world_cloud, currentPose);
+    accumulated_clouds_for_std.push_back(world_cloud);
+    std_frame_count++;
+    
+    // STD keyframe logic (frame-count-based, independent of LIO-SAM)
+    if (std_frame_count >= std_keyframe_interval) {
+        // Merge and process
+        merged_cloud = merge(accumulated_clouds_for_std);
+        std_manager->GenerateSTDescs(merged_cloud, stds_vec);
         std_manager->SearchLoop(stds_vec, search_result, loop_transform, loop_std_pair);
+        
         if (search_result.first >= 0) {
             // Add loop closure factor to LIO-SAM's gtSAMgraph
-            addSTDLoopFactor(current_id, matched_id, loop_transform);
+            gtSAMgraph.add(BetweenFactor(...));
+            aLoopIsClosed = true;
         }
         std_manager->AddSTDescs(stds_vec);
+        
+        // Reset for next keyframe
+        accumulated_clouds_for_std.clear();
+        std_frame_count = 0;
     }
 }
 ```

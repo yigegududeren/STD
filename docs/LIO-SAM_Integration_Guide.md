@@ -78,28 +78,56 @@ STD uses a simpler **frame-count-based** strategy:
 
 #### Recommended Integration Strategy
 
-**Option 1: Use LIO-SAM's Keyframe Selection (Recommended)**
+**Use STD's Frame-Count-Based Strategy (Independent of LIO-SAM's Keyframes)**
+
+The key insight is that STD should use its **own frame-count-based keyframe selection**, independent of LIO-SAM's distance/rotation-based keyframe selection. This means:
+
+1. **Accumulate every frame** in world coordinates (from LIO-SAM's odometry)
+2. **Count frames** independently of LIO-SAM's keyframe logic
+3. **Create STD keyframes** every N frames (e.g., N=10)
+4. **Pass accumulated point clouds** to STD
+
 ```cpp
-// In LIO-SAM's saveKeyFramesAndFactor() function
-if (isKeyFrame) {
-    // Accumulate recent scans for STD
-    accumulate_cloud_for_std();
+// In LIO-SAM's main loop (process every frame, not just LIO-SAM keyframes)
+void processPointCloud() {
+    // Get current world frame cloud from LIO-SAM
+    pcl::PointCloud<pcl::PointXYZI>::Ptr world_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+    pcl::transformPointCloud(*currentCloud, *world_cloud, currentPose);
     
-    // Generate STD descriptors
-    std_manager->GenerateSTDescs(accumulated_cloud, stds_vec);
+    // Accumulate for STD (independent of LIO-SAM keyframe selection)
+    accumulated_clouds_for_std.push_back(world_cloud);
+    std_frame_count++;
     
-    // Search for loops
-    std_manager->SearchLoop(stds_vec, search_result, loop_transform, loop_std_pair);
-    
-    // Add to database
-    std_manager->AddSTDescs(stds_vec);
+    // STD keyframe logic (every N frames, regardless of LIO-SAM keyframes)
+    if (std_frame_count >= std_keyframe_interval) {
+        // Merge accumulated clouds
+        pcl::PointCloud<pcl::PointXYZI>::Ptr merged_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+        for (auto& cloud : accumulated_clouds_for_std) {
+            *merged_cloud += *cloud;
+        }
+        
+        // Generate STD descriptors
+        std_manager->GenerateSTDescs(merged_cloud, stds_vec);
+        std_manager->SearchLoop(stds_vec, search_result, loop_transform, loop_std_pair);
+        
+        if (search_result.first >= 0) {
+            addSTDLoopFactor(current_liosam_id, matched_liosam_id, loop_transform);
+        }
+        
+        std_manager->AddSTDescs(stds_vec);
+        
+        // Reset for next STD keyframe
+        accumulated_clouds_for_std.clear();
+        std_frame_count = 0;
+    }
 }
 ```
 
-**Option 2: Hybrid Approach**
-- Use LIO-SAM's keyframe for odometry factors
-- Use frame-count for STD (every N frames of LIO-SAM keyframes)
-- Example: Every 5th LIO-SAM keyframe becomes an STD keyframe
+**Why This Approach?**
+- STD's frame-count strategy is simpler and more predictable
+- Decouples STD processing from LIO-SAM's adaptive keyframe selection
+- Ensures consistent temporal spacing for STD descriptors
+- Works well with STD's design philosophy
 
 ---
 
@@ -183,23 +211,203 @@ private:
     STDescManager* std_manager;
     ConfigSetting config_setting;
     
-    // Storage for STD
-    std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> accumulated_clouds;
-    int frames_since_last_std_keyframe;
-    int std_keyframe_interval; // e.g., 10
+    // Storage for STD (independent frame counting)
+    std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> accumulated_clouds_for_std;
+    int std_frame_count;           // Frame counter for STD (independent of LIO-SAM)
+    int std_keyframe_interval;     // e.g., 10 frames
     
     // Loop closure storage
     std::vector<std::pair<int, int>> loop_index_container;
     
     // Functions
     void initializeSTD();
+    void processEveryFrameForSTD();  // Called every frame, not just LIO-SAM keyframes
     void processSTDLoopClosure();
     void addSTDLoopFactor(int current_id, int matched_id, 
                          const std::pair<Eigen::Vector3d, Eigen::Matrix3d>& transform);
 };
 ```
 
-See full implementation guide in the document...
+#### Step 2: Initialize STD Manager
+
+```cpp
+void mapOptimization::initializeSTD() {
+    // Read STD parameters
+    nh.param<int>("std_keyframe_interval", std_keyframe_interval, 10);
+    read_parameters(nh, config_setting);
+    
+    // Create STD manager
+    std_manager = new STDescManager(config_setting);
+    std_frame_count = 0;
+}
+```
+
+#### Step 3: Process Every Frame for STD (Key Change!)
+
+**Critical:** Process STD on **every frame**, not just LIO-SAM keyframes.
+
+```cpp
+void mapOptimization::processEveryFrameForSTD() {
+    // This should be called in your main point cloud callback
+    // BEFORE LIO-SAM's keyframe selection logic
+    
+    // Get current cloud in world frame
+    pcl::PointCloud<pcl::PointXYZI>::Ptr world_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+    pcl::transformPointCloud(*laserCloudIn, *world_cloud, transformTobeMapped);
+    
+    // Downsample for efficiency
+    down_sampling_voxel(*world_cloud, 0.5);
+    
+    // Accumulate for STD (every frame, not just keyframes)
+    accumulated_clouds_for_std.push_back(world_cloud);
+    std_frame_count++;
+    
+    // Check if STD keyframe based on FRAME COUNT (not LIO-SAM's keyframe logic)
+    if (std_frame_count >= std_keyframe_interval) {
+        processSTDLoopClosure();
+        std_frame_count = 0;
+        accumulated_clouds_for_std.clear();
+    }
+}
+
+// In your main point cloud callback:
+void mapOptimization::laserCloudInfoHandler(const sensor_msgs::PointCloud2ConstPtr& msg) {
+    // ... existing LIO-SAM preprocessing ...
+    
+    // Process STD independently (every frame)
+    processEveryFrameForSTD();
+    
+    // LIO-SAM's keyframe logic (distance/rotation based)
+    if (saveFrame()) {
+        saveKeyFramesAndFactor();  // LIO-SAM's keyframe processing
+    }
+}
+```
+
+#### Step 4: Process STD Loop Closure
+
+```cpp
+void mapOptimization::processSTDLoopClosure() {
+    // Merge accumulated clouds
+    pcl::PointCloud<pcl::PointXYZI>::Ptr merged_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+    for (const auto& cloud : accumulated_clouds_for_std) {
+        *merged_cloud += *cloud;
+    }
+    
+    // Downsample merged cloud
+    down_sampling_voxel(*merged_cloud, config_setting.ds_size_);
+    
+    // Generate descriptors
+    std::vector<STDesc> stds_vec;
+    std_manager->GenerateSTDescs(merged_cloud, stds_vec);
+    
+    // Search for loops
+    std::pair<int, double> search_result(-1, 0);
+    std::pair<Eigen::Vector3d, Eigen::Matrix3d> loop_transform;
+    std::vector<std::pair<STDesc, STDesc>> loop_std_pair;
+    
+    int current_std_keyframe_id = std_manager->key_cloud_vec_.size();
+    if (current_std_keyframe_id > config_setting.skip_near_num_) {
+        std_manager->SearchLoop(stds_vec, search_result, loop_transform, loop_std_pair);
+    }
+    
+    // Add to database
+    std_manager->AddSTDescs(stds_vec);
+    
+    // If loop detected, add factor
+    if (search_result.first >= 0) {
+        int matched_std_id = search_result.first;
+        
+        // Refine with ICP
+        std_manager->PlaneGeomrtricIcp(
+            std_manager->plane_cloud_vec_.back(),
+            std_manager->plane_cloud_vec_[matched_std_id],
+            loop_transform);
+        
+        // Map STD keyframe ID to closest LIO-SAM keyframe ID
+        // (since STD and LIO-SAM use different keyframe strategies)
+        int current_liosam_id = cloudKeyPoses3D->size() - 1;
+        int matched_liosam_id = findClosestLIOSAMKeyframe(matched_std_id);
+        
+        // Add loop closure factor
+        addSTDLoopFactor(current_liosam_id, matched_liosam_id, loop_transform);
+        
+        // Store for visualization
+        loop_index_container.push_back({current_liosam_id, matched_liosam_id});
+    }
+}
+```
+
+#### Step 5: Add Loop Factor to Graph
+
+```cpp
+void mapOptimization::addSTDLoopFactor(
+    int current_id, int matched_id,
+    const std::pair<Eigen::Vector3d, Eigen::Matrix3d>& loop_transform) {
+    
+    // Get poses from LIO-SAM's pose graph
+    gtsam::Pose3 pose_from = poseFrom(cloudKeyPoses6D->points[matched_id]);
+    gtsam::Pose3 pose_to = poseFrom(cloudKeyPoses6D->points[current_id]);
+    
+    // Create relative transformation
+    Eigen::Affine3d delta_T = Eigen::Affine3d::Identity();
+    delta_T.translate(loop_transform.first);
+    delta_T.rotate(loop_transform.second);
+    
+    gtsam::Pose3 pose_to_refined = gtsam::Pose3(delta_T.matrix()) * pose_to;
+    
+    // Compute relative pose
+    gtsam::Pose3 relative_pose = pose_from.between(pose_to_refined);
+    
+    // Add factor with robust noise model
+    double loopNoiseScore = 0.5;  // Can be tuned based on search_result.second
+    gtsam::Vector robustNoiseVector6(6);
+    robustNoiseVector6 << loopNoiseScore, loopNoiseScore, loopNoiseScore,
+                          loopNoiseScore, loopNoiseScore, loopNoiseScore;
+    
+    gtsam::noiseModel::Base::shared_ptr robustLoopNoise =
+        gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Cauchy::Create(1),
+            gtsam::noiseModel::Diagonal::Variances(robustNoiseVector6));
+    
+    // Add to LIO-SAM's graph
+    gtSAMgraph.add(gtsam::BetweenFactor<gtsam::Pose3>(
+        matched_id, current_id, relative_pose, robustLoopNoise));
+    
+    // Trigger optimization
+    aLoopIsClosed = true;
+}
+```
+
+---
+
+### Code Examples
+
+#### Complete Integration Example
+
+See `demo/online_demo.cpp` in this repository for a complete working example of STD integration with FAST-LIO2. The integration pattern is similar for LIO-SAM.
+
+**Key differences for LIO-SAM:**
+1. STD processes **every frame** using frame-count-based keyframes
+2. LIO-SAM uses **adaptive keyframes** based on distance/rotation
+3. Two keyframe strategies operate **independently**
+4. Need to map between STD keyframe indices and LIO-SAM keyframe indices
+5. Use LIO-SAM's existing `gtSAMgraph` for loop factors
+
+#### Parameter Tuning
+
+**In your LIO-SAM config file:**
+```yaml
+# STD Parameters
+std_keyframe_interval: 10        # Create STD keyframe every 10 frames (not LIO-SAM keyframes!)
+ds_size: 0.5                     # Downsampling voxel size
+descriptor_min_len: 2.0          # Minimum triangle side length
+descriptor_max_len: 50.0         # Maximum triangle side length
+skip_near_num: 50                # Skip recent N frames when searching
+candidate_num: 50                # Number of candidates to consider
+icp_threshold: 0.5               # Loop detection threshold
+sub_frame_num: 10                # Frames to accumulate per keyframe (same as std_keyframe_interval)
+```
 
 ---
 
@@ -275,7 +483,60 @@ if (cloudInd % config_setting.sub_frame_num_ == 0 && cloudInd != 0) {
 2. **旋转阈值**：机器人旋转超过 Y 度时创建新关键帧
 3. **时间阈值**：关键帧之间的最小时间间隔
 
-**推荐集成方案**：使用 LIO-SAM 的关键帧选择，在其关键帧基础上累积点云用于 STD
+**STD 的关键帧策略**：
+- 使用简单的**基于帧数的策略**（每 N 帧一个关键帧，例如 N=10）
+- 累积 N 个连续帧形成一个关键帧点云
+
+**推荐集成方案：使用 STD 的帧数策略（独立于 LIO-SAM 关键帧）**
+
+关键要点是 STD 应使用**自己的基于帧数的关键帧选择**，独立于 LIO-SAM 的基于距离/旋转的关键帧选择。这意味着：
+
+1. **累积每一帧**的世界坐标点云（来自 LIO-SAM 的里程计）
+2. **独立计数帧数**（不依赖 LIO-SAM 的关键帧逻辑）
+3. **每 N 帧创建 STD 关键帧**（例如 N=10）
+4. **将累积的点云传递给 STD**
+
+```cpp
+// 在 LIO-SAM 的主循环中（处理每一帧，而不仅仅是 LIO-SAM 关键帧）
+void processPointCloud() {
+    // 从 LIO-SAM 获取当前世界坐标系点云
+    pcl::PointCloud<pcl::PointXYZI>::Ptr world_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+    pcl::transformPointCloud(*currentCloud, *world_cloud, currentPose);
+    
+    // 为 STD 累积（独立于 LIO-SAM 关键帧选择）
+    accumulated_clouds_for_std.push_back(world_cloud);
+    std_frame_count++;
+    
+    // STD 关键帧逻辑（每 N 帧，无论 LIO-SAM 关键帧如何）
+    if (std_frame_count >= std_keyframe_interval) {
+        // 合并累积的点云
+        pcl::PointCloud<pcl::PointXYZI>::Ptr merged_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+        for (auto& cloud : accumulated_clouds_for_std) {
+            *merged_cloud += *cloud;
+        }
+        
+        // 生成 STD 描述符并搜索回环
+        std_manager->GenerateSTDescs(merged_cloud, stds_vec);
+        std_manager->SearchLoop(stds_vec, search_result, loop_transform, loop_std_pair);
+        
+        if (search_result.first >= 0) {
+            addSTDLoopFactor(current_liosam_id, matched_liosam_id, loop_transform);
+        }
+        
+        std_manager->AddSTDescs(stds_vec);
+        
+        // 为下一个 STD 关键帧重置
+        accumulated_clouds_for_std.clear();
+        std_frame_count = 0;
+    }
+}
+```
+
+**为什么采用这种方法？**
+- STD 的帧数策略更简单、更可预测
+- 将 STD 处理与 LIO-SAM 的自适应关键帧选择解耦
+- 确保 STD 描述符的时间间隔一致
+- 符合 STD 的设计理念
 
 ---
 
