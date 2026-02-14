@@ -1,5 +1,7 @@
 <launch>
-<!-- Launch file for Livox AVIA LiDAR -->
+<!-- Launch file for online SLAM with FAST-LIO2 integration -->
+<!-- NOTE: This demo expects UNDISTORTED point cloud data from FAST-LIO2. -->
+<!-- FAST-LIO2 provides motion-compensated point clouds suitable for STD descriptor generation. -->
 
   <arg name="rviz" default="true" />
   <rosparam command="load" file="$(find std_detector)/config/config_online.yaml" />

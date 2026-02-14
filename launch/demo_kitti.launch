@@ -1,5 +1,8 @@
 <launch>
-<!-- Launch file for Livox AVIA LiDAR -->
+<!-- Launch file for KITTI Dataset (Velodyne HDL-64E) -->
+<!-- NOTE: This demo uses RAW point cloud data from KITTI (.bin files). -->
+<!-- No motion distortion correction is needed for mechanical spinning LiDARs -->
+<!-- as the vehicle motion during a single scan is minimal. -->
 
   <arg name="rviz" default="true" />
   <rosparam command="load" file="$(find std_detector)/config/config_kitti.yaml" />
@@ -9,7 +12,9 @@
 		name="place_recognition_kitti" 
 		output="screen" 
 	/>
+  <!-- Path to folder containing RAW KITTI .bin files -->
   <param name="lidar_path" type="string" value = "/usb/kitti/sequences/00/velodyne/"/>
+  <!-- Path to pose file with format: timestamp x y z qx qy qz qw -->
   <param name="pose_path" type="string" value = "/usb2/kitti_bags/correct_pose/kitti00.txt"/>
 
   <group if="$(arg rviz)">
